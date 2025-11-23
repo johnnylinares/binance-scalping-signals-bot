@@ -29,7 +29,7 @@ async def main():
             try:
                 await log("🔄 Iniciando ciclo de tracking de precios...")
                 
-                wait_seconds = 24 * 60 * 60
+                wait_seconds = 6 * 60 * 60
             
                 try:
                     await asyncio.wait_for(
