@@ -77,31 +77,31 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
 
                     elif hit == 0 and current_price >= sl_prices[1]:
                         close_price = sl_prices[1]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(-1, entry_price, close_price, percentage_change)
                         hit = -1
 
                     elif hit == 0 and current_price <= tp_prices[0]:
                         close_price = tp_prices[0]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(1, entry_price, close_price, percentage_change)
                         hit = 1
 
                     elif hit == 1 and current_price <= tp_prices[1]:
                         close_price = tp_prices[1]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(2, entry_price, close_price, percentage_change)
                         hit = 2
 
                     elif hit == 2 and current_price <= tp_prices[2]:
                         close_price = tp_prices[2]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(3, entry_price, close_price, percentage_change)
                         hit = 3
 
                     elif hit == 3 and current_price <= tp_prices[3]:
                         close_price = tp_prices[4]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(4, entry_price, close_price, percentage_change)
                         hit = 4
                         
@@ -112,64 +112,64 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
 
                     elif hit == 0 and current_price <= sl_prices[1]:
                         close_price = sl_prices[1]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(-1, entry_price, close_price, percentage_change)
                         hit = -1
 
                     elif hit == 0 and current_price >= tp_prices[0]:
                         close_price = tp_prices[0]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(1, entry_price, close_price, percentage_change)
                         hit = 1
                         
                         
                     elif hit == 1 and current_price >= tp_prices[1]:
                         close_price = tp_prices[1]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(2, entry_price, close_price, percentage_change)
                         hit = 2
 
                     elif hit == 2 and current_price >= tp_prices[2]:
                         close_price = tp_prices[2]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(3, entry_price, close_price, percentage_change)
                         hit = 3
 
                     elif hit == 3 and current_price >= tp_prices[3]:
                         close_price = tp_prices[3]
-                        closed_at = datetime.now(vzla_utc).isoformat()
+                        close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(4, entry_price, close_price, percentage_change)
                         hit = 4
 
             # Manejar timeout - cerrar trade si no llegó a ningún TP/SL
             if time.time() - start_time >= 7800 and hit == 0:
                 close_price = current_price
-                closed_at = datetime.now(vzla_utc).isoformat()
+                close_time = datetime.now(vzla_utc).isoformat()
                 result = await hited(0, entry_price, close_price, percentage_change)
                     
     except asyncio.CancelledError:
         await log(f"TRADE HANDLER: Monitoreo de {symbol} cancelado.")
-        if closed_at is None:
-            closed_at = datetime.now(vzla_utc).isoformat()
+        if close_time is None:
+            close_time = datetime.now(vzla_utc).isoformat()
         if close_price is None:
             close_price = current_price
         return
     except Exception as e:
         await log(f"TRADE HANDLER: [ERROR] en socket de {symbol}: {e}")
-        if closed_at is None:
-            closed_at = datetime.now(vzla_utc).isoformat()
+        if close_time is None:
+            close_time = datetime.now(vzla_utc).isoformat()
         if close_price is None:
-            close_price = current_price
+            close_time = current_price
         return
 
     finally:
-        if closed_at is None:
+        if close_time is None:
             await log(f"TRADE HANDLER: Monitoreo de {symbol} finalizado sin cierre. No se insertará en DB.")
             return
         
         trade_data = {
             "created_at": start_time,
-            "closed_at": closed_at,
+            "closed_at": close_time,
             "symbol": symbol,
             "direction": direction,
             "volume": round(volume, 2),
