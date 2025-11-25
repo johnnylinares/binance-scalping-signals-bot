@@ -159,7 +159,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
         if close_time is None:
             close_time = datetime.now(vzla_utc).isoformat()
         if close_price is None:
-            close_time = current_price
+            close_price = current_price
         return
 
     finally:
