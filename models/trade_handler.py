@@ -101,7 +101,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                         hit = 3
 
                     elif hit == 3 and current_price <= tp_prices[3]:
-                        close_price = tp_prices[4]
+                        close_price = tp_prices[3]
                         close_time = datetime.now(vzla_utc).isoformat()
                         result = await hited(4, entry_price, close_price, percentage_change)
                         hit = 4
