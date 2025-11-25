@@ -18,7 +18,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
 
     # TIME
     vzla_utc = pytz.timezone('America/Caracas')
-    start_time = datetime.now(vzla_utc).isoformat()
+    start_time = time.time()
     close_time = None
 
     # DIRECTION & LEVELS
@@ -38,6 +38,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
     
     hit = 0  # Information TP/SL
     result = 0.0  # Inicializar result
+    sl4_hit = False # Inicializar sl4_hit
 
     async def hited(hit_type, entry_price, close_price, percentage_change):
         """Calcula el resultado del trade y envía alerta"""
@@ -168,7 +169,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
             return
         
         trade_data = {
-            "created_at": start_time,
+            "created_at": datetime.fromtimestamp(start_time, tz=vzla_utc).isoformat(),
             "closed_at": close_time,
             "symbol": symbol,
             "direction": direction,
