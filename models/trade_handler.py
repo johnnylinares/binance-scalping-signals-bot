@@ -11,8 +11,8 @@ SL_LEVELS = [0.04, 0.05]
 
 async def trade_handler(bm, symbol, percentage_change, price, original_message_id, volume):
 
-    # PRICE
-    entry_price = price
+    # MAIN CONFIG
+    entry_price = float(price)
     current_price = None
     close_price = None
 
@@ -26,10 +26,12 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
         tp_prices = [entry_price * (1 - tp) for tp in TP_LEVELS]
         sl_prices = [entry_price * (1 + sl) for sl in SL_LEVELS]
         direction = "SHORT"
+        side = -1
     else:
         tp_prices = [entry_price * (1 + tp) for tp in TP_LEVELS]
         sl_prices = [entry_price * (1 - sl) for sl in SL_LEVELS]
         direction = "LONG"
+        side = 1
 
     await log(f"TRADE HANDLER: Monitoreando {symbol} ({percentage_change:+.2f}%)")
 
@@ -37,22 +39,20 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
     ts = bm.futures_multiplex_socket(stream)
     
     hit = 0  # Information TP/SL
-    result = 0.0  # Inicializar result
+    result = 0  # Inicializar result
     sl4_hit = False # Inicializar sl4_hit
-
-    async def hited(hit_type, entry_price, close_price, percentage_change):
-        """Calcula el resultado del trade y envía alerta"""
-        if percentage_change > 0:
-            calc_result = round(((entry_price / close_price) - 1) * 100, 2)
-        else:
-            calc_result = round(((close_price / entry_price) - 1) * 100, 2)
-        
-        await tp_sl_alert_handler(hit_type, calc_result, close_price, original_message_id)
-        return calc_result
+    active_trade = True
 
     try:
         async with ts as tscm:
-            while hit != 4 and hit != -1 and time.time() - start_time < 7800:
+            while active_trade:
+                if time.time() - start_time > 7800:
+                    close_price = current_price
+                    close_time = datetime.now(vzla_utc).isoformat()
+                    result = ((close_price - entry_price) / entry_price) * side * 100
+                    await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                    break
+
                 try:
                     msg = await asyncio.wait_for(tscm.recv(), timeout=60.0)
                 except asyncio.TimeoutError:
@@ -71,82 +71,61 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                 except (ValueError, KeyError, TypeError):
                     continue
                 
-                # SHORT (percentage_change > 0)
-                if percentage_change > 0:
-                    if hit == 0 and current_price >= sl_prices[0]:
+                if direction == "SHORT":
+                    if current_price >= sl_prices[1]:
+                        if hit == 0:
+                            close_price = sl_prices[1]
+                            close_time = datetime.now(vzla_utc).isoformat()
+                            result = -1 * SL_LEVELS[1] * 100
+                            hit = -1
+                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                        active_trade = False
+                        break
+                    
+                    elif not sl4_hit and current_price >= sl_prices[0]:
                         sl4_hit = True
 
-                    elif hit == 0 and current_price >= sl_prices[1]:
-                        close_price = sl_prices[1]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(-1, entry_price, close_price, percentage_change)
-                        hit = -1
+                    for i in range(hit, len(tp_prices)):
+                        if hit == i and current_price <= tp_prices[i]:
+                            close_price = tp_prices[i]
+                            close_time = datetime.now(vzla_utc).isoformat()
+                            result = TP_LEVELS[i] * 100
+                            hit = i + 1
+                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
 
-                    elif hit == 0 and current_price <= tp_prices[0]:
-                        close_price = tp_prices[0]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(1, entry_price, close_price, percentage_change)
-                        hit = 1
-
-                    elif hit == 1 and current_price <= tp_prices[1]:
-                        close_price = tp_prices[1]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(2, entry_price, close_price, percentage_change)
-                        hit = 2
-
-                    elif hit == 2 and current_price <= tp_prices[2]:
-                        close_price = tp_prices[2]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(3, entry_price, close_price, percentage_change)
-                        hit = 3
-
-                    elif hit == 3 and current_price <= tp_prices[3]:
-                        close_price = tp_prices[3]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(4, entry_price, close_price, percentage_change)
-                        hit = 4
+                            if hit == len(tp_prices):
+                                active_trade = False
+                            break
+                        else:
+                            break
                         
-                # LONG (percentage_change < 0)
                 else:
-                    if hit == 0 and current_price <= sl_prices[0]:
+                    if current_price <= sl_prices[1]:
+                        if hit == 0:
+                            close_price = sl_prices[1]
+                            close_time = datetime.now(vzla_utc).isoformat()
+                            result = -1 * SL_LEVELS[1] * 100
+                            hit = -1
+                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                        active_trade = False
+                        break
+                    
+                    elif not sl4_hit and hit == 0 and current_price <= sl_prices[0]:
                         sl4_hit = True
 
-                    elif hit == 0 and current_price <= sl_prices[1]:
-                        close_price = sl_prices[1]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(-1, entry_price, close_price, percentage_change)
-                        hit = -1
+                    for i in range(hit, len(tp_prices)):
+                        if hit == i and current_price >= tp_prices[i]:
+                            close_price = tp_prices[i]
+                            close_time = datetime.now(vzla_utc).isoformat()
+                            result = TP_LEVELS[i] * 100
+                            hit = i + 1
+                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
 
-                    elif hit == 0 and current_price >= tp_prices[0]:
-                        close_price = tp_prices[0]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(1, entry_price, close_price, percentage_change)
-                        hit = 1
-                        
-                        
-                    elif hit == 1 and current_price >= tp_prices[1]:
-                        close_price = tp_prices[1]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(2, entry_price, close_price, percentage_change)
-                        hit = 2
-
-                    elif hit == 2 and current_price >= tp_prices[2]:
-                        close_price = tp_prices[2]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(3, entry_price, close_price, percentage_change)
-                        hit = 3
-
-                    elif hit == 3 and current_price >= tp_prices[3]:
-                        close_price = tp_prices[3]
-                        close_time = datetime.now(vzla_utc).isoformat()
-                        result = await hited(4, entry_price, close_price, percentage_change)
-                        hit = 4
-
-            # Manejar timeout - cerrar trade si no llegó a ningún TP/SL
-            if time.time() - start_time >= 7800 and hit == 0:
-                close_price = current_price
-                close_time = datetime.now(vzla_utc).isoformat()
-                result = await hited(0, entry_price, close_price, percentage_change)
+                            if hit == len(tp_prices):
+                                active_trade = False
+                            break
+                        else:
+                            break
                     
     except asyncio.CancelledError:
         await log(f"TRADE HANDLER: Monitoreo de {symbol} cancelado.")
