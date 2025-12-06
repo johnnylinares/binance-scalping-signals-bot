@@ -11,7 +11,6 @@ bot = telegram.Bot(token=os.getenv("BOT_TOKEN"))
 async def alert_handler(symbol, percentage_change, price, emoji, volume):
     vol_rnd = round(volume / 1000000, 2)
 
-
     msg : Message = await bot.send_message(
         chat_id=os.getenv("CHANNEL_ID"),
         text=f'{emoji[0]} #{symbol} {emoji[1]} {percentage_change:+.2f}%\n💵 ${price} 💰 ${vol_rnd}M'
@@ -21,7 +20,7 @@ async def alert_handler(symbol, percentage_change, price, emoji, volume):
 
 async def tp_sl_alert_handler(hit, result, original_message_id):
     if hit == -1:
-        alert = f"❌ SL (+{result}%)"
+        alert = f"❌ SL ({result}%)"
     elif hit == 0:
         alert = f"➖ CERRADA (+{result}%)" if result > 0 else f"➖ CERRADA ({result}%)"
     elif hit == 1:

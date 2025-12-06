@@ -1,5 +1,6 @@
 import time
 import asyncio
+from collections import deque
 from binance import BinanceSocketManager
 from models.log_handler import log
 from models.alert_handler import alert_handler
@@ -78,7 +79,7 @@ async def _handle_websocket_stream(client, streams: list, price_history: dict, g
                     history.append((now, price))
                     
                     while history and (now - history[0][0]) > TIME_WINDOW:
-                        history.pop(0)
+                        history.popleft() 
                     
                     if len(history) < 2:
                         continue
@@ -114,7 +115,7 @@ async def price_handler(client, coins, duration_seconds):
 
     await log("🤖 PRICE TRACKER ACTIVATED")
 
-    price_history = {coin: [] for coin in coins}
+    price_history = {coin: deque() for coin in coins}
     
     coins_list = list(coins)
     groups = [coins_list[i:i + GROUP_SIZE] for i in range(0, len(coins_list), GROUP_SIZE)]

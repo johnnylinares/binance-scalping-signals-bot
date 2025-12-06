@@ -46,13 +46,6 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
     try:
         async with ts as tscm:
             while active_trade:
-                if time.time() - start_time > 7800:
-                    close_price = current_price
-                    close_time = datetime.now(vzla_utc).isoformat()
-                    result = ((close_price - entry_price) / entry_price) * side * 100
-                    await tp_sl_alert_handler(hit, result, original_message_id)
-                    break
-
                 try:
                     msg = await asyncio.wait_for(tscm.recv(), timeout=60.0)
                 except asyncio.TimeoutError:
@@ -82,7 +75,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                         active_trade = False
                         break
                     
-                    elif not sl4_hit and current_price >= sl_prices[0]:
+                    elif not sl4_hit and hit == 0 and current_price >= sl_prices[0]:
                         sl4_hit = True
 
                     for i in range(hit, len(tp_prices)):
@@ -126,6 +119,12 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                             break
                         else:
                             break
+            if hit == 0 and time.time() - start_time > 7800:
+                close_price = current_price
+                close_time = datetime.now(vzla_utc).isoformat()
+                result = ((close_price - entry_price) / entry_price) * side * 100
+                await tp_sl_alert_handler(hit, result, original_message_id)
+                
                     
     except asyncio.CancelledError:
         await log(f"TRADE HANDLER: Monitoreo de {symbol} cancelado.")
