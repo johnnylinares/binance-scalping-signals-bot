@@ -50,7 +50,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                     close_price = current_price
                     close_time = datetime.now(vzla_utc).isoformat()
                     result = ((close_price - entry_price) / entry_price) * side * 100
-                    await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                    await tp_sl_alert_handler(hit, result, original_message_id)
                     break
 
                 try:
@@ -78,7 +78,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                             close_time = datetime.now(vzla_utc).isoformat()
                             result = -1 * SL_LEVELS[1] * 100
                             hit = -1
-                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                            await tp_sl_alert_handler(hit, result, original_message_id)
                         active_trade = False
                         break
                     
@@ -91,7 +91,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                             close_time = datetime.now(vzla_utc).isoformat()
                             result = TP_LEVELS[i] * 100
                             hit = i + 1
-                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                            await tp_sl_alert_handler(hit, result, original_message_id)
 
                             if hit == len(tp_prices):
                                 active_trade = False
@@ -106,7 +106,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                             close_time = datetime.now(vzla_utc).isoformat()
                             result = -1 * SL_LEVELS[1] * 100
                             hit = -1
-                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                            await tp_sl_alert_handler(hit, result, original_message_id)
                         active_trade = False
                         break
                     
@@ -119,7 +119,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
                             close_time = datetime.now(vzla_utc).isoformat()
                             result = TP_LEVELS[i] * 100
                             hit = i + 1
-                            await tp_sl_alert_handler(hit, result, close_price, original_message_id)
+                            await tp_sl_alert_handler(hit, result, original_message_id)
 
                             if hit == len(tp_prices):
                                 active_trade = False
