@@ -1,5 +1,6 @@
 import time
 import asyncio
+from collections import deque
 from binance import BinanceSocketManager
 from models.log_handler import log
 from models.alert_handler import alert_handler
@@ -9,8 +10,7 @@ from models.trade_handler import trade_handler
 
 THRESHOLD = 20
 TIME_WINDOW = 7800 # 2h10m (s)
-GROUP_SIZE = 50 
-LOG_INTERVAL = 600 # 10m (s)
+GROUP_SIZE = 50
 
 async def alert_worker(bm, symbol, percentage_change, price, emoji, volume, group_id):
     try:
@@ -30,7 +30,8 @@ async def alert_worker(bm, symbol, percentage_change, price, emoji, volume, grou
             symbol,
             percentage_change,
             price,
-            original_msg_id
+            original_msg_id,
+            volume
         )
 
     except Exception as e:
@@ -71,14 +72,14 @@ async def _handle_websocket_stream(client, streams: list, price_history: dict, g
                 
                 try:
                     price = float(ticker_data['c'])
-                    volume = round(float(ticker_data['q']) / 1000000, 1)
+                    volume = float(ticker_data['q'])
                     now = time.time()
                     
                     history = price_history[symbol]
                     history.append((now, price))
                     
                     while history and (now - history[0][0]) > TIME_WINDOW:
-                        history.pop(0)
+                        history.popleft() 
                     
                     if len(history) < 2:
                         continue
@@ -114,7 +115,7 @@ async def price_handler(client, coins, duration_seconds):
 
     await log("🤖 PRICE TRACKER ACTIVATED")
 
-    price_history = {coin: [] for coin in coins}
+    price_history = {coin: deque() for coin in coins}
     
     coins_list = list(coins)
     groups = [coins_list[i:i + GROUP_SIZE] for i in range(0, len(coins_list), GROUP_SIZE)]
