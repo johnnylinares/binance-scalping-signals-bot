@@ -45,7 +45,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
 
     try:
         async with ts as tscm:
-            while active_trade:
+            while active_trade and time.time() - start_time <= 7800:
                 try:
                     msg = await asyncio.wait_for(tscm.recv(), timeout=60.0)
                 except asyncio.TimeoutError:
