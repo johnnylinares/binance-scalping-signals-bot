@@ -1,184 +1,102 @@
-# 🤖 Binance Scalping Signals Bot
+# Binance Scalping Signals Bot
 
-A bot that uses the Binance API to monitor futures coins and send automatic alerts when it detects significant movements of 20% or more.
+#### Video Demo: https://youtu.be/-E8tzhUWzwg
 
-## 📊 Features
+#### Description:
 
-- **Real-Time Monitoring**: Tracks cryptocurrency prices using Binance WebSockets
-- **Smart Alerts**: Automatically notifies of price changes ≥20% within 2h 10m windows
-- **Batch Processing**: Efficiently handles multiple symbols while respecting Binance limits
-- **24/7 Uptime**: Integrated web server to keep the bot active continuously
+The **Binance Scalping Signals Bot** is an automated trading tool designed to monitor the cryptocurrency futures market in real-time. As a cryptocurrency trader with two years of experience, I noticed that manually tracking hundreds of assets for sudden volatility is impossible for a human. I often saw similar bots in paid Telegram channels and decided to challenge myself to build my own version, tailored to my specific "contrarian" scalping strategy, while deepening my understanding of Python, asynchronous programming, and API integration.
 
-## 🛠️ Technologies Used
+This project solves a specific problem: **detecting significant price anomalies (volatility spikes) and managing the subsequent trade simulation automatically.**
 
-- **Python 3.12.4+**
-- **Binance API**: For real-time market data
-- **Telegram Bot API**: For sending alerts
-- **Flask**: Web server for uptime
-- **AsyncIO**: Asynchronous programming for better performance
+### How it Works
 
-## 📋 Prerequisites
+The bot connects to the Binance Futures API to retrieve market data. It does not monitor every single coin blindly; instead, it applies a smart filter based on 24-hour trading volume to ensure liquidity and avoid "pump and dump" schemes on low-cap coins. Once the coins are selected, the bot opens multiple WebSocket connections to track their prices in real-time.
 
-1.  **Binance account** with API enabled
-2.  **Telegram Bot** created with @BotFather
-3.  **Telegram Channel/Group** to receive alerts
+The core logic revolves around a "Time Bucket" system. The bot records price snapshots and calculates the percentage change over a sliding window (configurable, default is 2 hours and 10 minutes). If a coin moves more than **20%** (up or down) within this window, the bot considers it a "signal." It immediately sends an alert to a Telegram channel and, crucial to this project, initiates a **Trade Handler**. This handler continues to track the coin to simulate a trade (Long or Short) against the trend, checking for Take Profit (TP) or Stop Loss (SL) levels, and finally logging the result to a Supabase database.
 
-## ⚙️ Configuration
+### File Structure and Functionality
 
-### 1\. Clone the repository
+The project is structured into modular components to separate concerns (connection, logic, alerting, and data persistence). Here is a detailed breakdown of the files I created:
+
+- **`main.py`**:
+    This is the entry point of the application. It initializes the `Binance AsyncClient` and starts the main infinite loop. Inside this loop, it calls the `coin_handler` to refresh the list of monitored coins every 6 hours (to account for new listings or volume changes). It also runs a lightweight **Flask** web server in a separate thread. This design choice was made to satisfy health checks on cloud hosting platforms (like Render or Heroku) which require a web service to keep the bot running 24/7.
+
+- **`models/coin_handler.py`**:
+    This module is responsible for the initial filtering. It fetches all available tickers from Binance Futures. I implemented a logic filter here: it only selects pairs ending in `USDT` with a 24-hour quote volume between **$10M and $1B**. This effectively filters out "dead" coins and overly stable coins, leaving only the ones with the right volatility for scalping.
+
+- **`models/price_handler.py`**:
+    This is the heart of the detection logic. It receives the filtered list of coins and manages the WebSocket connections. Instead of opening one socket per coin (which would hit API limits), I used `BinanceSocketManager` to multiplex streams in batches (groups of 50). It maintains a `deque` (double-ended queue) for each coin to store price history efficiently. When the threshold (20%) is breached, it triggers the `alert_worker`.
+
+- **`models/alert_handler.py`**:
+    This module handles the communication with the user. It uses the `python-telegram-bot` library to send formatted messages with emojis (🟢/🔴) indicating the direction of the signal. It also contains logic to update the user on the trade status (e.g., replying to the original message when a TP or SL is hit).
+
+- **`models/trade_handler.py`**:
+    Perhaps the most complex logic resides here. Once a signal is found, this handler "watches" that specific coin intensely for a set period (e.g., 2 hours). It calculates entry price, target prices (TP 1-4), and stop-loss levels based on predefined percentages. It uses a dedicated WebSocket stream for this specific coin to ensure zero latency in tracking the outcome. Once the trade concludes (win, loss, or timeout), it calls the database handler.
+
+- **`models/db_handler.py`**:
+    This file manages the connection to **Supabase** (PostgreSQL). It contains the `insert_trade` function, which saves the full metadata of the signal (symbol, entry price, result percentage, duration) for future statistical analysis.
+
+- **`config/settings.py`**:
+    A centralized place to load environment variables (API keys, secrets, bot tokens) using `python-dotenv`, ensuring sensitive data is not hardcoded.
+
+### Design Choices
+
+**1. Asynchronous Programming (`asyncio`)**
+One of the biggest design decisions was to build the entire bot using `asyncio` instead of threading or synchronous code. Tracking hundreds of WebSocket streams and processing messages in real-time requires high concurrency. A synchronous approach would have introduced lag, potentially causing the bot to miss the exact second a price spike occurred. `asyncio` allows the bot to handle thousands of I/O operations per second with minimal resource overhead.
+
+**2. The Volume Filter**
+I debated whether to monitor *all* coins or filter them. I chose to filter by volume (10M - 1B) because, in my trading experience, coins with very low volume are susceptible to market manipulation, while coins with massive volume (like Bitcoin or Ethereum) rarely move 20% in a short time. This design choice optimizes the bot's resources to focus only on "viable" scalping targets.
+
+**3. Separation of Alerting and Tracking**
+Initially, I considered just sending the alert and forgetting about it. However, I decided to implement the `trade_handler` to make the project "stateful." The bot doesn't just notify; it *follows through*. This required passing the Telegram `message_id` between functions so the bot could reply to its own specific alert with the result (Win/Loss), creating a clean and organized user experience in the Telegram channel.
+
+---
+
+## 🛠️ Installation & Usage
+
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/johnnylinares/binance-scalping-signals-bot.git
+git clone [https://github.com/johnnylinares/binance-scalping-signals-bot.git](https://github.com/johnnylinares/binance-scalping-signals-bot.git)
 cd binance-scalping-signals-bot
 ```
 
-### 2\. Install dependencies
+### 2. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3\. Configure environment variables
+### 3. Configure environment variables
+Create a .env file in the project's root:
 
-Create a `.env` file in the project's root:
+Fragmento de código
 
-```env
-# Binance API
+#### Binance API
+```bash
 API_KEY="your_binance_api_key"
 API_SECRET="your_binance_api_secret"
+```
 
-# Main Telegram Bot
+#### Main Telegram Bot
+
+```bash
 BOT_TOKEN="your_bot_token"
 CHANNEL_ID="your_channel_id"
 ```
 
-### 4\. Get the necessary credentials
+#### Database
 
-#### Binance API:
+```bash
+SUPABASE_URL="your_supabase_url"
+SUPABASE_SERVICE_KEY="your_supabase_key"
+```
 
-1.  Go to [Binance API Management](https://www.binance.com/en/my/settings/api-management)
-2.  Create a new API Key
-3.  Enable "Enable Reading" (you don't need trading permissions)
-4.  Save your API Key and Secret Key
-
-#### Telegram Bot:
-
-1.  Talk to [@BotFather](https://t.me/botfather) on Telegram
-2.  Use `/newbot` to create a new bot
-3.  Save the token it provides
-4.  Add the bot to your channel/group and make it an administrator
-5.  Get the channel ID using [@userinfobot](https://t.me/userinfobot)
-
-## 🚀 Usage
-
-### Run locally
+### 4. Run the bot
 
 ```bash
 python main.py
 ```
 
-### Run in production
-
-The bot includes a Flask server that responds on port 8000 to maintain uptime:
-
-```bash
-python main.py
-```
-
-The server will be available at `http://localhost:8000`
-
-## 📊 How it Works
-
-1.  **Connection**: The bot connects to the Binance API using WebSockets
-2.  **Monitoring**: It tracks prices of multiple cryptocurrencies in real time
-3.  **Analysis**: It calculates percentage changes in 2-hour windows
-4.  **Alerts**: It sends notifications when it detects changes ≥20%
-5.  **Filtering**: It prevents spam with a time bucket system
-
-## 📱 Alert Format
-
-```
-🟢 #BTCUSDT 📈 +25.67%
-💵 $45,230.50 💰 $1,234.56M
-```
-
-- 🟢📈 = Price increase
-- 🔴📉 = Price decrease
-- Cryptocurrency symbol
-- Percentage change
-- Current price
-- Volume in millions
-
-## ⚡ Advanced Configuration
-
-### Modify the alert threshold
-
-In `price_handler.py`, change the constant:
-
-```python
-THRESHOLD = 20.0  # Change to your desired percentage
-```
-
-### Modify the time window
-
-```python
-TIME_WINDOW = 7800 # 2h 10m in seconds
-```
-
-## 🔧 Project Structure
-
-```
-binance-scalping-signals-bot/
-├── main.py                 # Main entry point
-├── config/
-│   └── settings.py         # Configuration and environment variables
-├── models/
-│   ├── alert_handler.py    # Telegram alert handling
-│   ├── coin_handler.py     # Price monitoring logic
-│   ├── log_handler.py      # Simple log function
-│   └── price_handler.py    # Cryptocurrency symbol management
-├── requirements.txt        # Python dependencies
-├── .env                    # Environment variables (do not include in git)
-└── README.md               # This file
-```
-
-## 🐛 Troubleshooting
-
-### Connection error to Binance
-
-- Verify that your API Key and Secret are correct
-- Make sure the API Key has reading permissions enabled
-- Check that you haven't exceeded Binance's rate limits
-
-### Bot doesn't send messages
-
-- Confirm that the bot is an administrator of the channel
-- Verify that the CHANNEL_ID is correct (it must include the `-` for channels)
-- Check that the BOT_TOKEN is valid
-
-### Performance issues
-
-- The bot automatically handles multiple symbols in batches
-- If you experience lag, reduce the number of monitored symbols
-
-## 🤝 Contribute
-
-1.  Fork the project
-2.  Create a branch for your feature (`git checkout -b feature/AmazingFeature`)
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
-
-## ⚠️ Disclaimer
-
+⚠️ Disclaimer
 This bot is for educational and informational purposes only. It does not constitute financial advice. Always do your own research before making investment decisions.
-
-## 📞 Support
-
-If you have problems or questions:
-
-- Open an [Issue](https://github.com/johnnylinares/binance-scalping-signals-bot/issues)
-
----
-
-⭐ If this project is useful to you, don't forget to give it a star\!
