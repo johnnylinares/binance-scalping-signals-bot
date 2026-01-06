@@ -5,9 +5,13 @@ from datetime import datetime
 from models.log_handler import log
 from models.alert_handler import tp_sl_alert_handler 
 from models.db_handler import insert_trade
+from models.operation_handler import OperationHandler
 
 TP_LEVELS = [0.05, 0.10, 0.15, 0.20]
 SL_LEVELS = [0.04, 0.05]
+
+# Inicializamos el gestor de operaciones (se conecta a Binance Testnet al iniciar)
+op_handler = OperationHandler()
 
 async def trade_handler(bm, symbol, percentage_change, price, original_message_id, volume):
 
@@ -32,6 +36,20 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
         sl_prices = [entry_price * (1 - sl) for sl in SL_LEVELS]
         direction = "LONG"
         side = 1
+
+    # --- INTEGRACIÓN CON OPERATION HANDLER ---
+    try:
+        signal_data = {
+            "symbol": symbol,
+            "direction": direction,
+            "volume": volume,
+            "price": entry_price
+        }
+        # Ejecutamos en un hilo separado (executor) para no bloquear el loop asíncrono del bot
+        asyncio.get_running_loop().run_in_executor(None, op_handler.process_new_signal, signal_data)
+        await log(f"TRADE HANDLER: Señal enviada a OperationHandler para {symbol}")
+    except Exception as e:
+        await log(f"TRADE HANDLER: [ERROR] Fallo al enviar señal a OperationHandler: {e}")
 
     await log(f"TRADE HANDLER: Monitoreando {symbol} ({percentage_change:+.2f}%)")
 
@@ -122,7 +140,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
             if hit == 0 and time.time() - start_time > 7800:
                 close_price = current_price
                 close_time = datetime.now(vzla_utc).isoformat()
-                result = ((close_price - entry_price) / entry_price) * side * 100
+                result = round(((close_price - entry_price) / entry_price) * side * 100, 2)
                 await tp_sl_alert_handler(hit, result, original_message_id)
                 
                     
