@@ -1,3 +1,4 @@
+ccxt
 Flask
 python-binance
 python-telegram-bot
