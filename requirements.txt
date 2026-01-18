@@ -6,3 +6,4 @@ python-dotenv
 dateparser
 pycryptodome
 supabase
+websocket-client
