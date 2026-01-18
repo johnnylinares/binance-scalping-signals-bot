@@ -1,177 +1,219 @@
 import os
-import ccxt
+import json
+import hmac
+import hashlib
 import time
+import uuid
 import threading
-from datetime import datetime, timedelta
+import websocket  # Requiere: pip install websocket-client
+from datetime import datetime
 
 class OperationHandler:
     def __init__(self):
         """
-        Inicializa el gestor de operaciones en modo TESTNET.
-        Usa las variables de entorno DEMO_API_KEY y DEMO_API_SECRET.
+        Inicializa el gestor de operaciones usando WebSocket directo (Testnet).
         """
         self.api_key = os.getenv('DEMO_API_KEY')
-        self.api_secret = os.getenv('DEMO_API_SECRET')
+        self.secret_key = os.getenv('DEMO_API_SECRET')
+        self.ws_url = "wss://testnet.binancefuture.com/ws-fapi/v1"
 
-        if not self.api_key or not self.api_secret:
-            print("⚠️ ADVERTENCIA: No se encontraron DEMO_API_KEY o DEMO_API_SECRET en el entorno.")
+        if not self.api_key or not self.secret_key:
+            print("⚠️ ADVERTENCIA: No se encontraron DEMO_API_KEY o DEMO_API_SECRET.")
 
-        # Conexión a Binance Futures (Testnet)
-        self.exchange = ccxt.binanceusdm({
-            'apiKey': self.api_key,
-            'secret': self.api_secret,
-            'options': {
-                'defaultType': 'future',
-                'adjustForTimeDifference': True
-            }
-        })
-        self.exchange.set_sandbox_mode(True) # Activamos modo Testnet
-        print("🤖 OperationHandler: Conectado a Binance Futures TESTNET.")
-
-        # Diccionario para rastrear operaciones activas y su tiempo de inicio
-        # Key: symbol, Value: { 'entry_time': datetime, 'amount': float }
+        # Diccionario para rastrear operaciones activas
+        # Key: symbol, Value: { 'entry_time': datetime, 'quantity': float, 'direction': str }
         self.active_trades = {}
         self.lock = threading.Lock()
 
-        # Iniciar hilo en segundo plano para revisar el tiempo (2 horas)
+        # Iniciar monitor de timeouts (2h 10m)
         self.monitor_thread = threading.Thread(target=self._monitor_timeouts, daemon=True)
         self.monitor_thread.start()
+        print("🤖 OperationHandler: Iniciado en modo WebSocket (Testnet).")
+
+    def _get_signature(self, params):
+        """Genera la firma HMAC SHA256."""
+        query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+        return hmac.new(self.secret_key.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+
+    def _send_ws_request(self, method, params):
+        """
+        Abre una conexión efímera para enviar una solicitud y recibir la respuesta.
+        Sigue la lógica del test provisto pero síncrono para asegurar orden de ejecución.
+        """
+        ws = None
+        try:
+            ws = websocket.create_connection(self.ws_url)
+            
+            # Timestamp fix (-2000ms como en tu test)
+            timestamp = int((time.time() * 1000) - 2000)
+            
+            request_params = {
+                "apiKey": self.api_key,
+                "timestamp": timestamp,
+                **params
+            }
+            
+            # Firma
+            request_params["signature"] = self._get_signature(request_params)
+
+            payload = {
+                "id": str(uuid.uuid4()),
+                "method": method,
+                "params": request_params
+            }
+
+            ws.send(json.dumps(payload))
+            
+            # Esperar respuesta
+            response = ws.recv()
+            return json.loads(response)
+
+        except Exception as e:
+            print(f"❌ Error WS Request: {e}")
+            return {"error": str(e)}
+        finally:
+            if ws:
+                ws.close()
 
     def process_new_signal(self, signal_data):
         """
-        Punto de entrada principal. Evalúa la señal y ejecuta si cumple los requisitos.
-        signal_data: {'symbol': str, 'direction': 'SHORT', 'volume': float, 'price': float}
+        Procesa la señal, calcula el tamaño para 100 USDT (10$ x 10x) y ejecuta.
         """
         symbol = signal_data.get('symbol')
-        direction = signal_data.get('direction')
-        volume = float(signal_data.get('volume', 0))
+        direction = signal_data.get('direction') # 'LONG' o 'SHORT'
         price = float(signal_data.get('price', 0))
 
-        # --- FILTROS DE ESTRATEGIA ---
+        if price == 0:
+            return
+
+        # 1. Calcular Cantidad
+        # Estrategia: 10 USDT de margen x 10 de apalancamiento = 100 USDT de posición
+        position_size_usdt = 100.0
+        quantity = position_size_usdt / price
         
-        # 1. Solo SHORT
-        if direction != 'SHORT':
-            # print(f"ignoring {symbol}: Direction is {direction}") # Opcional: reducir ruido
-            return
+        # Redondear cantidad (Asumiendo 3 decimales para simplificar en Testnet, idealmente dinámico)
+        quantity = round(quantity, 3) 
+        if quantity == 0:
+            quantity = 0.001 # Mínimo de seguridad
 
-        # 2. Volumen < 100M
-        if volume >= 100_000_000:
-            print(f"🚫 Ignorado {symbol}: Volumen {volume:,.0f} excesivo (>100M).")
-            return
+        print(f"⚡ PROCESANDO {symbol} ({direction}) | Qty: {quantity} | Precio Ref: {price}")
 
-        # Si pasa los filtros, ejecutamos la estrategia
-        print(f"⚡ OPORTUNIDAD VÁLIDA: {symbol} | Vol: {volume:,.0f} | Dir: {direction}")
-        self._execute_short_strategy(symbol, price)
+        # 2. Ejecutar Entrada
+        side = "BUY" if direction == "LONG" else "SELL"
+        
+        order_params = {
+            "symbol": symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": str(quantity)
+        }
 
-    def _execute_short_strategy(self, symbol, entry_price_estimate):
-        try:
-            # Configuración de Capital
-            leverage = 10
-            margin_usdt = 10.0
-            position_size_usdt = margin_usdt * leverage # 100 USDT de posición
+        response = self._send_ws_request("order.place", order_params)
+
+        if 'result' in response:
+            res = response['result']
+            avg_price = float(res.get('avgPrice', price)) # Usar precio real de fill si existe
+            print(f"✅ ORDEN EJECUTADA: {symbol} @ {avg_price}")
             
-            # Configuración de Salida
-            tp_pct = 0.05
-            sl_pct = 0.05
-
-            # 1. Ajustar Apalancamiento
-            try:
-                self.exchange.set_leverage(leverage, symbol)
-            except Exception as e:
-                print(f"⚠️ Info Leverage {symbol}: {e}")
-
-            # 2. Calcular cantidad (Amount) precisa
-            # Necesitamos el precio actual real para calcular la cantidad exacta de monedas
-            ticker = self.exchange.fetch_ticker(symbol)
-            current_price = ticker['last']
-            
-            amount_raw = position_size_usdt / current_price
-            amount = self.exchange.amount_to_precision(symbol, amount_raw)
-            
-            print(f"🚀 Ejecutanzo SHORT en {symbol}. Margen: ${margin_usdt} (x{leverage})")
-
-            # 3. ENTRADA A MERCADO
-            order = self.exchange.create_market_sell_order(symbol, amount)
-            real_entry_price = float(order['average']) if order.get('average') else current_price
-            print(f"✅ ORDEN EJECUTADA @ {real_entry_price}")
-
-            # 4. CALCULO DE TP Y SL
-            # Short: TP es Restar, SL es Sumar
-            tp_price = real_entry_price * (1 - tp_pct)
-            sl_price = real_entry_price * (1 + sl_pct)
-
-            # Ajustar precisión de precios para Binance
-            tp_price = self.exchange.price_to_precision(symbol, tp_price)
-            sl_price = self.exchange.price_to_precision(symbol, sl_price)
-
-            # 5. COLOCAR ÓRDENES DE PROTECCIÓN (TP y SL)
-            
-            # Stop Loss (Market Trigger)
-            self.exchange.create_order(symbol, 'STOP_MARKET', 'buy', amount, params={
-                'stopPrice': sl_price,
-                'reduceOnly': True
-            })
-
-            # Take Profit (Limit Order - Para asegurar profit en libro)
-            # Nota: Usamos TAKE_PROFIT (trigger) o LIMIT directo. 
-            # Para "TP Limit" estricto, usamos TAKE_PROFIT con price y stopPrice iguales o cercanos.
-            self.exchange.create_order(symbol, 'TAKE_PROFIT', 'buy', amount, params={
-                'stopPrice': tp_price, # Gatillo
-                'price': tp_price,     # Precio limite
-                'reduceOnly': True
-            })
-
-            print(f"🛡️ SL: {sl_price} | 🎯 TP: {tp_price}")
-
-            # 6. REGISTRAR EN MEMORIA (Para el cierre de 2h)
+            # Registrar trade
             with self.lock:
                 self.active_trades[symbol] = {
                     'entry_time': datetime.now(),
-                    'amount': amount
+                    'quantity': quantity,
+                    'direction': direction,
+                    'entry_price': avg_price
                 }
 
-        except Exception as e:
-            print(f"❌ ERROR CRÍTICO operando {symbol}: {e}")
+            # 3. Colocar TP y SL
+            self._place_protection_orders(symbol, direction, quantity, avg_price)
+        
+        else:
+            print(f"❌ Error ejecutando entrada {symbol}: {response}")
+
+    def _place_protection_orders(self, symbol, direction, quantity, entry_price):
+        """Coloca TP (10%) y SL (5%)"""
+        
+        tp_pct = 0.10
+        sl_pct = 0.05
+        
+        tp_price = 0
+        sl_price = 0
+        close_side = ""
+
+        if direction == "LONG":
+            close_side = "SELL"
+            tp_price = entry_price * (1 + tp_pct)
+            sl_price = entry_price * (1 - sl_pct)
+        else: # SHORT
+            close_side = "BUY"
+            tp_price = entry_price * (1 - tp_pct)
+            sl_price = entry_price * (1 + sl_pct)
+
+        # Redondeo de precios (2 decimales por defecto, ajustar según par)
+        tp_price = round(tp_price, 2)
+        sl_price = round(sl_price, 2)
+
+        print(f"🛡️ Configurando {symbol}: TP {tp_price} | SL {sl_price}")
+
+        # Orden Stop Loss (Market)
+        sl_params = {
+            "symbol": symbol,
+            "side": close_side,
+            "type": "STOP_MARKET",
+            "stopPrice": str(sl_price),
+            "closePosition": "true", # Cierra la posición entera
+        }
+        self._send_ws_request("order.place", sl_params)
+
+        # Orden Take Profit (Market)
+        tp_params = {
+            "symbol": symbol,
+            "side": close_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": str(tp_price),
+            "closePosition": "true",
+        }
+        self._send_ws_request("order.place", tp_params)
 
     def _monitor_timeouts(self):
         """
-        Hilo daemon que revisa cada minuto si alguna operación lleva > 2h abierta.
+        Revisa cada minuto si una operación lleva abierta más de 2h 10m (7800s).
         """
-        print("🕰️ Monitor de tiempo (2h) iniciado...")
         while True:
-            try:
-                time.sleep(60) # Revisar cada minuto
-                now = datetime.now()
-                to_remove = []
+            time.sleep(60)
+            now = datetime.now()
+            to_remove = []
 
-                with self.lock:
-                    # Copiamos items para iterar sin errores
-                    for symbol, data in self.active_trades.items():
-                        entry_time = data['entry_time']
-                        amount = data['amount']
-                        
-                        # Diferencia de tiempo
-                        elapsed = now - entry_time
-                        
-                        # 2 Horas = 7200 segundos
-                        if elapsed.total_seconds() > 7200:
-                            print(f"⏰ TIEMPO AGOTADO (2h) para {symbol}. Cerrando a mercado...")
-                            self._force_close(symbol, amount)
-                            to_remove.append(symbol)
+            with self.lock:
+                for symbol, data in self.active_trades.items():
+                    elapsed = (now - data['entry_time']).total_seconds()
                     
-                    # Limpiar lista
-                    for symbol in to_remove:
-                        del self.active_trades[symbol]
+                    # 2 Horas 10 Minutos = 7800 segundos
+                    if elapsed > 7800:
+                        print(f"⏰ TIEMPO AGOTADO para {symbol}. Cerrando...")
+                        self._close_position(symbol, data)
+                        to_remove.append(symbol)
+                
+                for s in to_remove:
+                    del self.active_trades[s]
 
-            except Exception as e:
-                print(f"⚠️ Error en monitor de tiempo: {e}")
+    def _close_position(self, symbol, data):
+        """
+        Cierra la posición a mercado y cancela órdenes abiertas.
+        """
+        # 1. Cancelar todas las órdenes (TP/SL)
+        self._send_ws_request("order.cancelAll", {"symbol": symbol})
 
-    def _force_close(self, symbol, amount):
-        try:
-            # 1. Cancelar órdenes abiertas (TP/SL pendientes)
-            self.exchange.cancel_all_orders(symbol)
-            # 2. Cerrar posición (Market Buy)
-            self.exchange.create_market_buy_order(symbol, amount, params={'reduceOnly': True})
-            print(f"💀 Operación {symbol} cerrada por tiempo.")
-        except Exception as e:
-            print(f"❌ Error cerrando {symbol} por tiempo: {e}")
+        # 2. Cerrar posición (Operación contraria)
+        side = "SELL" if data['direction'] == "LONG" else "BUY"
+        
+        close_params = {
+            "symbol": symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": str(data['quantity']),
+            "reduceOnly": "true"
+        }
+        
+        res = self._send_ws_request("order.place", close_params)
+        print(f"💀 Posición cerrada por tiempo: {symbol} | Res: {res.get('result', 'OK')}")
