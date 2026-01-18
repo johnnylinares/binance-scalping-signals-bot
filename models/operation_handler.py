@@ -7,6 +7,9 @@ import uuid
 import threading
 import websocket  # Requiere: pip install websocket-client
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class OperationHandler:
     def __init__(self):
