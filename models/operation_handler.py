@@ -7,17 +7,15 @@ import uuid
 import threading
 import websocket  # Requiere: pip install websocket-client
 from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
+from config.settings import DEMO_API_KEY, DEMO_API_SECRET
 
 class OperationHandler:
     def __init__(self):
         """
         Inicializa el gestor de operaciones usando WebSocket directo (Testnet).
         """
-        self.api_key = os.getenv('DEMO_API_KEY')
-        self.secret_key = os.getenv('DEMO_API_SECRET')
+        self.api_key = DEMO_API_KEY
+        self.secret_key = DEMO_API_SECRET
         self.ws_url = "wss://testnet.binancefuture.com/ws-fapi/v1"
 
         if not self.api_key or not self.secret_key:
@@ -47,7 +45,6 @@ class OperationHandler:
         try:
             ws = websocket.create_connection(self.ws_url)
             
-            # Timestamp fix (-2000ms como en tu test)
             timestamp = int((time.time() * 1000) - 2000)
             
             request_params = {
@@ -56,7 +53,6 @@ class OperationHandler:
                 **params
             }
             
-            # Firma
             request_params["signature"] = self._get_signature(request_params)
 
             payload = {
@@ -67,7 +63,6 @@ class OperationHandler:
 
             ws.send(json.dumps(payload))
             
-            # Esperar respuesta
             response = ws.recv()
             return json.loads(response)
 
@@ -88,20 +83,15 @@ class OperationHandler:
 
         if price == 0:
             return
-
-        # 1. Calcular Cantidad
-        # Estrategia: 10 USDT de margen x 10 de apalancamiento = 100 USDT de posición
         position_size_usdt = 100.0
         quantity = position_size_usdt / price
         
-        # Redondear cantidad (Asumiendo 3 decimales para simplificar en Testnet, idealmente dinámico)
         quantity = round(quantity, 3) 
         if quantity == 0:
             quantity = 0.001 # Mínimo de seguridad
 
         print(f"⚡ PROCESANDO {symbol} ({direction}) | Qty: {quantity} | Precio Ref: {price}")
 
-        # 2. Ejecutar Entrada
         side = "BUY" if direction == "LONG" else "SELL"
         
         order_params = {

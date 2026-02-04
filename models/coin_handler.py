@@ -1,5 +1,6 @@
 from models.log_handler import log
 from models.price_handler import price_handler
+from config.settings import MIN_VOLUME, MAX_VOLUME
 
 async def coin_handler(client, duration_seconds):
     """
@@ -16,7 +17,7 @@ async def coin_handler(client, duration_seconds):
             if ticker['symbol'].endswith('USDT'):
                 try:
                     volume = float(ticker['quoteVolume'])
-                    if 10_000_000 <= volume <= 1_000_000_000:
+                    if MIN_VOLUME <= volume <= MAX_VOLUME:
                         f_coins.append(ticker['symbol'])
                 except (ValueError, KeyError, TypeError):
                     continue

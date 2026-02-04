@@ -6,13 +6,14 @@ from datetime import datetime
 from flask import Flask, jsonify
 from binance import AsyncClient
 
+from config.settings import API_KEY, API_SECRET
 from models.coin_handler import coin_handler
 from models.log_handler import log
 
 async def binance_client():
     client = await AsyncClient.create(
-        api_key=os.getenv("API_KEY"), 
-        api_secret=os.getenv("API_SECRET")
+        api_key = API_KEY,
+        api_secret = API_SECRET
     )
 
     await log("🟢 Binance client created sucessfully.")

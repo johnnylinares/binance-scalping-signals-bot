@@ -1,17 +1,11 @@
-import os
 from supabase import create_client, Client
-from dotenv import load_dotenv
 from models.log_handler import log
-
-load_dotenv()
-
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_SERVICE_KEY")
+from config.settings import SUPABASE_URL, SUPABASE_KEY
 
 supabase: Client = None
 
 try:
-    supabase: Client = create_client(url, key)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     print("[DB_HANDLER] Conexión con Supabase creada.")
 except Exception as e:
     print(f"[DB_HANDLER] ERROR al crear cliente de Supabase: {e}")

@@ -6,11 +6,8 @@ from models.log_handler import log
 from models.alert_handler import tp_sl_alert_handler 
 from models.db_handler import insert_trade
 from models.operation_handler import OperationHandler
+from config.settings import TP_LEVELS, SL_LEVELS
 
-TP_LEVELS = [0.05, 0.10, 0.15, 0.20]
-SL_LEVELS = [0.04, 0.05]
-
-# Inicializamos el gestor de operaciones (se conecta a Binance Testnet al iniciar)
 op_handler = OperationHandler()
 
 async def trade_handler(bm, symbol, percentage_change, price, original_message_id, volume):

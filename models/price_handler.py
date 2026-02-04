@@ -5,12 +5,7 @@ from binance import BinanceSocketManager
 from models.log_handler import log
 from models.alert_handler import alert_handler
 from models.trade_handler import trade_handler
-
-# MAIN CONFIG
-
-THRESHOLD = 20
-TIME_WINDOW = 7800 # 2h10m (s)
-GROUP_SIZE = 50
+from config.settings import THRESHOLD, TIME_WINDOW, GROUP_SIZE
 
 async def alert_worker(bm, symbol, percentage_change, price, emoji, volume, group_id):
     try:

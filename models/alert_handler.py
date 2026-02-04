@@ -1,18 +1,14 @@
 import telegram
-import os
 from telegram import Message
+from config.settings import BOT_TOKEN, CHANNEL_ID 
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-bot = telegram.Bot(token=os.getenv("BOT_TOKEN"))
+bot = telegram.Bot(BOT_TOKEN)
 
 async def alert_handler(symbol, percentage_change, price, emoji, volume):
     vol_rnd = round(volume / 1000000, 2)
 
     msg : Message = await bot.send_message(
-        chat_id=os.getenv("CHANNEL_ID"),
+        chat_id = CHANNEL_ID,
         text=f'{emoji[0]} #{symbol} {emoji[1]} {percentage_change:+.2f}%\n💵 ${price} 💰 ${vol_rnd}M'
     )
     print(f"{symbol} alert sended.")
@@ -33,7 +29,7 @@ async def tp_sl_alert_handler(hit, result, original_message_id):
         alert = f"✅ TP4 (+{result}%)"
 
     await bot.send_message(
-        chat_id=os.getenv("CHANNEL_ID"),
+        chat_id = CHANNEL_ID,
 
         text=f'{alert}',
         reply_to_message_id=original_message_id
