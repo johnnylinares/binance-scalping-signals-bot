@@ -1,212 +1,217 @@
-import os
-import json
-import hmac
-import hashlib
-import time
-import uuid
-import threading
-import websocket  # Requiere: pip install websocket-client
-from datetime import datetime
+from binance.client import Client
+from binance.enums import *
+from binance.exceptions import BinanceAPIException
 from config.settings import DEMO_API_KEY, DEMO_API_SECRET
 
 class OperationHandler:
     def __init__(self):
         """
-        Inicializa el gestor de operaciones usando WebSocket directo (Testnet).
+        Inicializa el gestor de operaciones usando Client Síncrono para Testnet.
         """
         self.api_key = DEMO_API_KEY
         self.secret_key = DEMO_API_SECRET
-        self.ws_url = "wss://testnet.binancefuture.com/ws-fapi/v1"
-
-        if not self.api_key or not self.secret_key:
-            print("⚠️ ADVERTENCIA: No se encontraron DEMO_API_KEY o DEMO_API_SECRET.")
-
-        # Diccionario para rastrear operaciones activas
-        # Key: symbol, Value: { 'entry_time': datetime, 'quantity': float, 'direction': str }
-        self.active_trades = {}
-        self.lock = threading.Lock()
-
-        # Iniciar monitor de timeouts (2h 10m)
-        self.monitor_thread = threading.Thread(target=self._monitor_timeouts, daemon=True)
-        self.monitor_thread.start()
-        print("🤖 OperationHandler: Iniciado en modo WebSocket (Testnet).")
-
-    def _get_signature(self, params):
-        """Genera la firma HMAC SHA256."""
-        query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-        return hmac.new(self.secret_key.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-
-    def _send_ws_request(self, method, params):
-        """
-        Abre una conexión efímera para enviar una solicitud y recibir la respuesta.
-        Sigue la lógica del test provisto pero síncrono para asegurar orden de ejecución.
-        """
-        ws = None
+        self.hedge_mode = False # Por defecto asumimos One-way
+        
+        # Inicializar cliente en modo Testnet
         try:
-            ws = websocket.create_connection(self.ws_url)
+            self.client = Client(self.api_key, self.secret_key, testnet=True)
+            print("🤖 OperationHandler: Conectado a Binance Futures TESTNET.")
             
-            timestamp = int((time.time() * 1000) - 2000)
+            # Detectar modo de posición (Hedge vs One-Way) para evitar errores de cierre
+            self._check_position_mode()
             
-            request_params = {
-                "apiKey": self.api_key,
-                "timestamp": timestamp,
-                **params
-            }
-            
-            request_params["signature"] = self._get_signature(request_params)
-
-            payload = {
-                "id": str(uuid.uuid4()),
-                "method": method,
-                "params": request_params
-            }
-
-            ws.send(json.dumps(payload))
-            
-            response = ws.recv()
-            return json.loads(response)
-
         except Exception as e:
-            print(f"❌ Error WS Request: {e}")
-            return {"error": str(e)}
-        finally:
-            if ws:
-                ws.close()
+            print(f"⚠️ OperationHandler: Error conectando a Binance: {e}")
+
+    def _check_position_mode(self):
+        """Revisa si la cuenta está en Hedge Mode o One-Way Mode"""
+        try:
+            info = self.client.futures_get_position_mode()
+            # {'dualSidePosition': True} -> Hedge Mode
+            # {'dualSidePosition': False} -> One-Way Mode
+            if info['dualSidePosition']:
+                self.hedge_mode = True
+                print("ℹ️ Modo detectado: HEDGE MODE (Se usará positionSide)")
+            else:
+                self.hedge_mode = False
+                print("ℹ️ Modo detectado: ONE-WAY MODE")
+        except Exception as e:
+            print(f"⚠️ No se pudo obtener modo de posición: {e}. Asumiendo One-Way.")
+
+    def _get_symbol_info(self, symbol):
+        """
+        Obtiene precisiones y tick_size exacto del par.
+        """
+        try:
+            info = self.client.futures_exchange_info()
+            for s in info['symbols']:
+                if s['symbol'] == symbol:
+                    qty_precision = int(s['quantityPrecision'])
+                    price_precision = int(s['pricePrecision'])
+                    tick_size = 0.01 # Fallback
+                    
+                    # Buscar filtro PRICE_FILTER para tickSize exacto
+                    for f in s['filters']:
+                        if f['filterType'] == 'PRICE_FILTER':
+                            tick_size = float(f['tickSize'])
+                            break
+                            
+                    return qty_precision, price_precision, tick_size
+        except:
+            pass
+        return 3, 2, 0.01
+
+    def _round_step(self, value, step):
+        """
+        Redondea el valor al escalón (tick_size) más cercano.
+        Ej: value=100.051, step=0.01 -> 100.05
+        """
+        return round(value / step) * step
 
     def process_new_signal(self, signal_data):
         """
-        Procesa la señal, calcula el tamaño para 100 USDT (10$ x 10x) y ejecuta.
+        1. Recibe señal.
+        2. Entra en CONTRA de la tendencia.
+        3. Coloca TP y SL duros usando reglas de precisión estrictas y modo de posición.
         """
         symbol = signal_data.get('symbol')
-        direction = signal_data.get('direction') # 'LONG' o 'SHORT'
-        price = float(signal_data.get('price', 0))
+        signal_direction = signal_data.get('direction') 
+        ref_price = float(signal_data.get('price', 0))
 
-        if price == 0:
+        if not symbol or ref_price == 0:
             return
-        position_size_usdt = 100.0
-        quantity = position_size_usdt / price
+
+        # ---------------------------------------------------------
+        # 1. LÓGICA DE DIRECCIÓN Y MODE
+        # ---------------------------------------------------------
+        # Estrategia Contrarian:
+        # Señal LONG -> Entramos SHORT
+        # Señal SHORT -> Entramos LONG
         
-        quantity = round(quantity, 3) 
-        if quantity == 0:
-            quantity = 0.001 # Mínimo de seguridad
-
-        print(f"⚡ PROCESANDO {symbol} ({direction}) | Qty: {quantity} | Precio Ref: {price}")
-
-        side = "BUY" if direction == "LONG" else "SELL"
-        
-        order_params = {
-            "symbol": symbol,
-            "side": side,
-            "type": "MARKET",
-            "quantity": str(quantity)
-        }
-
-        response = self._send_ws_request("order.place", order_params)
-
-        if 'result' in response:
-            res = response['result']
-            avg_price = float(res.get('avgPrice', price)) # Usar precio real de fill si existe
-            print(f"✅ ORDEN EJECUTADA: {symbol} @ {avg_price}")
-            
-            # Registrar trade
-            with self.lock:
-                self.active_trades[symbol] = {
-                    'entry_time': datetime.now(),
-                    'quantity': quantity,
-                    'direction': direction,
-                    'entry_price': avg_price
-                }
-
-            # 3. Colocar TP y SL
-            self._place_protection_orders(symbol, direction, quantity, avg_price)
-        
+        if signal_direction == "SHORT":
+            # Vamos a abrir SHORT
+            side_entry = SIDE_SELL
+            side_exit = SIDE_BUY
+            # Si es Hedge Mode, debemos especificar que operamos el lado 'SHORT'
+            position_side = 'SHORT' if self.hedge_mode else 'BOTH'
+            user_msg = "SHORT"
         else:
-            print(f"❌ Error ejecutando entrada {symbol}: {response}")
+            # Vamos a abrir LONG
+            side_entry = SIDE_BUY
+            side_exit = SIDE_SELL
+            # Si es Hedge Mode, debemos especificar que operamos el lado 'LONG'
+            position_side = 'LONG' if self.hedge_mode else 'BOTH'
+            user_msg = "LONG"
 
-    def _place_protection_orders(self, symbol, direction, quantity, entry_price):
-        """Coloca TP (10%) y SL (5%)"""
-        
-        tp_pct = 0.10
-        sl_pct = 0.05
-        
-        tp_price = 0
-        sl_price = 0
-        close_side = ""
+        print(f"⚡ PROCESANDO {symbol} | Señal: {signal_direction} -> Operando: {user_msg}")
 
-        if direction == "LONG":
-            close_side = "SELL"
-            tp_price = entry_price * (1 + tp_pct)
-            sl_price = entry_price * (1 - sl_pct)
-        else: # SHORT
-            close_side = "BUY"
-            tp_price = entry_price * (1 - tp_pct)
-            sl_price = entry_price * (1 + sl_pct)
+        try:
+            # ---------------------------------------------------------
+            # 2. OBTENER INFORMACIÓN DE MERCADO
+            # ---------------------------------------------------------
+            qty_precision, price_precision, tick_size = self._get_symbol_info(symbol)
+            
+            # Cambiar apalancamiento
+            try:
+                self.client.futures_change_leverage(symbol=symbol, leverage=10)
+            except:
+                pass 
 
-        # Redondeo de precios (2 decimales por defecto, ajustar según par)
-        tp_price = round(tp_price, 2)
-        sl_price = round(sl_price, 2)
+            # ---------------------------------------------------------
+            # 3. CÁLCULOS
+            # ---------------------------------------------------------
+            # A) Cantidad
+            position_size_usdt = 100.0
+            raw_quantity = position_size_usdt / ref_price
+            quantity = round(raw_quantity, qty_precision)
+            
+            # B) Precios TP (10%) y SL (5%)
+            tp_pct = 0.10
+            sl_pct = 0.05
+            
+            if user_msg == "LONG":
+                raw_tp = ref_price * (1 + tp_pct)
+                raw_sl = ref_price * (1 - sl_pct)
+            else: # SHORT
+                raw_tp = ref_price * (1 - tp_pct)
+                raw_sl = ref_price * (1 + sl_pct)
 
-        print(f"🛡️ Configurando {symbol}: TP {tp_price} | SL {sl_price}")
+            # C) Redondeo estricto por tick_size (Evita errores de filtro)
+            tp_price = self._round_step(raw_tp, tick_size)
+            sl_price = self._round_step(raw_sl, tick_size)
 
-        # Orden Stop Loss (Market)
-        sl_params = {
-            "symbol": symbol,
-            "side": close_side,
-            "type": "STOP_MARKET",
-            "stopPrice": str(sl_price),
-            "closePosition": "true", # Cierra la posición entera
-        }
-        self._send_ws_request("order.place", sl_params)
+            # D) Formateo string para la API
+            tp_str = "{:.{}f}".format(tp_price, price_precision)
+            sl_str = "{:.{}f}".format(sl_price, price_precision)
 
-        # Orden Take Profit (Market)
-        tp_params = {
-            "symbol": symbol,
-            "side": close_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": str(tp_price),
-            "closePosition": "true",
-        }
-        self._send_ws_request("order.place", tp_params)
+            print(f"📝 PLAN: Qty:{quantity} | Ref:{ref_price} | TP:{tp_str} | SL:{sl_str}")
 
-    def _monitor_timeouts(self):
-        """
-        Revisa cada minuto si una operación lleva abierta más de 2h 10m (7800s).
-        """
-        while True:
-            time.sleep(60)
-            now = datetime.now()
-            to_remove = []
+            # ---------------------------------------------------------
+            # 4. ORDEN DE ENTRADA (MARKET)
+            # ---------------------------------------------------------
+            entry_params = {
+                'symbol': symbol,
+                'side': side_entry,
+                'type': ORDER_TYPE_MARKET,
+                'quantity': quantity,
+            }
+            # En Hedge Mode es obligatorio enviar positionSide
+            if self.hedge_mode:
+                entry_params['positionSide'] = position_side
 
-            with self.lock:
-                for symbol, data in self.active_trades.items():
-                    elapsed = (now - data['entry_time']).total_seconds()
-                    
-                    # 2 Horas 10 Minutos = 7800 segundos
-                    if elapsed > 7800:
-                        print(f"⏰ TIEMPO AGOTADO para {symbol}. Cerrando...")
-                        self._close_position(symbol, data)
-                        to_remove.append(symbol)
-                
-                for s in to_remove:
-                    del self.active_trades[s]
+            print(f"🚀 Enviando orden MARKET...")
+            entry_order = self.client.futures_create_order(**entry_params)
+            
+            avg_price = float(entry_order.get('avgPrice', ref_price))
+            print(f"✅ ENTRADA EJECUTADA: {symbol} @ {avg_price}")
 
-    def _close_position(self, symbol, data):
-        """
-        Cierra la posición a mercado y cancela órdenes abiertas.
-        """
-        # 1. Cancelar todas las órdenes (TP/SL)
-        self._send_ws_request("order.cancelAll", {"symbol": symbol})
+            # ---------------------------------------------------------
+            # 5. ORDENES DE SALIDA (TP / SL)
+            # ---------------------------------------------------------
+            # NOTA SEGÚN DOCUMENTACIÓN:
+            # - Para cerrar posición completa se usa closePosition=True (o string 'true').
+            # - NO se debe enviar 'quantity' cuando se usa closePosition=True.
+            # - El 'type' debe ser STOP_MARKET o TAKE_PROFIT_MARKET.
+            
+            # -- STOP LOSS --
+            sl_params = {
+                'symbol': symbol,
+                'side': side_exit,
+                'type': 'STOP_MARKET',
+                'stopPrice': sl_str,
+                'closePosition': 'true', # Enviamos string explícito para asegurar compatibilidad
+                'workingType': 'MARK_PRICE'
+            }
+            if self.hedge_mode:
+                sl_params['positionSide'] = position_side
+            
+            try:
+                self.client.futures_create_order(**sl_params)
+                print(f"   🛡️ SL ({sl_str}) -> OK")
+            except BinanceAPIException as e:
+                print(f"   ❌ ERROR AL COLOCAR SL: {e.message} (Código: {e.code})")
 
-        # 2. Cerrar posición (Operación contraria)
-        side = "SELL" if data['direction'] == "LONG" else "BUY"
-        
-        close_params = {
-            "symbol": symbol,
-            "side": side,
-            "type": "MARKET",
-            "quantity": str(data['quantity']),
-            "reduceOnly": "true"
-        }
-        
-        res = self._send_ws_request("order.place", close_params)
-        print(f"💀 Posición cerrada por tiempo: {symbol} | Res: {res.get('result', 'OK')}")
+            # -- TAKE PROFIT --
+            tp_params = {
+                'symbol': symbol,
+                'side': side_exit,
+                'type': 'TAKE_PROFIT_MARKET',
+                'stopPrice': tp_str,
+                'closePosition': 'true',
+                'workingType': 'MARK_PRICE'
+            }
+            if self.hedge_mode:
+                tp_params['positionSide'] = position_side
+
+            try:
+                self.client.futures_create_order(**tp_params)
+                print(f"   💰 TP ({tp_str}) -> OK")
+            except BinanceAPIException as e:
+                print(f"   ❌ ERROR AL COLOCAR TP: {e.message} (Código: {e.code})")
+
+            print(f"🏁 Proceso terminado para {symbol}")
+
+        except BinanceAPIException as e:
+            print(f"❌ ERROR API CRÍTICO en {symbol}: {e.message}")
+        except Exception as e:
+            print(f"❌ ERROR GENÉRICO en {symbol}: {e}")
