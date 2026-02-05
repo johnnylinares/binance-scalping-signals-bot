@@ -74,7 +74,7 @@ async def _handle_websocket_stream(client, streams: list, price_history: dict, g
                     history.append((now, price))
                     
                     while history and (now - history[0][0]) > TIME_WINDOW:
-                        history.popleft() 
+                        del history[0] 
                     
                     if len(history) < 2:
                         continue
