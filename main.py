@@ -3,7 +3,8 @@ import threading
 import os
 
 from datetime import datetime
-from flask import Flask, jsonify
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from binance import AsyncClient
 
 from config.settings import API_KEY, API_SECRET
@@ -62,26 +63,28 @@ def keep_bot():
     bot_thread.start()
     return bot_thread
 
-app = Flask(__name__)
+app = FastAPI(title="Binance/Telegram Bot", description="Binance scalping signals bot with Telegram integration")
 
-@app.route('/')
-def home():
-    return jsonify({"status": "active", "message": "Binance/Telegram Bot Running"})
+@app.get("/")
+async def home():
+    return {"status": "active", "message": "Binance/Telegram Bot Running"}
 
-@app.route('/ping')
-def ping():
-    return jsonify({"status": "ok"}), 200
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
-@app.route('/health')
-def health():
-    return jsonify({
+@app.get("/health")
+async def health():
+    return {
         "status": "healthy",
         "service": "binance-telegram-bot",
         "timestamp": datetime.now().isoformat()
-    }), 200
+    }
 
 if __name__ == "__main__":
+    import uvicorn
+    
     bot_thread = keep_bot()
     
     port = int(os.getenv("PORT", 8000))
-    app.run(host='0.0.0.0', port=port)
+    uvicorn.run(app, host='0.0.0.0', port=port)

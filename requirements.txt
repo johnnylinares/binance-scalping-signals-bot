@@ -1,5 +1,6 @@
 ccxt
 Flask
+fastapi
 python-binance
 python-telegram-bot
 python-dotenv
