@@ -159,7 +159,6 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
     finally:
         if close_time is None:
             await log(f"TRADE HANDLER: Monitoreo de {symbol} finalizado sin cierre. No se insertará en DB.")
-            return
         
         trade_data = {
             "created_at": datetime.fromtimestamp(start_time, tz=vzla_utc).isoformat(),
