@@ -5,7 +5,7 @@ from collections import deque
 from binance import BinanceSocketManager
 from models.log_handler import log
 from models.alert_handler import alert_handler
-from models.trade_handler import trade_handler
+from models.trade_handler import check_trade_conditions, get_active_trades_count
 from config.settings import THRESHOLD, TIME_WINDOW
 
 # Global price history persistence
@@ -81,9 +81,13 @@ async def _handle_market_stream(client, price_history: dict):
                         history = price_history[symbol]
                         history.append((now, price))
                         
+                        # Check trade conditions for this symbol
+                        await check_trade_conditions(symbol, price)
+                        
                         # Batch cleanup every 60 segundos
                         if now - last_cleanup_time > 60:
                             await log(f"🧹 Running batch cleanup for {len(price_history)} symbols...")
+                            await log(f"📊 Active trades: {get_active_trades_count()}")
                             for hist in price_history.values():
                                 while hist and (now - hist[0][0]) > TIME_WINDOW:
                                     hist.popleft()
@@ -106,6 +110,7 @@ async def _handle_market_stream(client, price_history: dict):
                                         symbol, percentage_change, price, emoji, volume
                                     )
 
+                                    from models.trade_handler import trade_handler
                                     await trade_handler(
                                         bm, symbol, percentage_change, price, original_msg_id, volume
                                     )
