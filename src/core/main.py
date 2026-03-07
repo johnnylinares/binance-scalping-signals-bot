@@ -7,9 +7,13 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from binance import AsyncClient
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from config.settings import API_KEY, API_SECRET
-from models.coin_handler import coin_handler
-from models.log_handler import log
+from handlers.coin_handler import coin_handler
+from handlers.log_handler import log
 
 async def binance_client():
     client = await AsyncClient.create(

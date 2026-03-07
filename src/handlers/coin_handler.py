@@ -1,5 +1,5 @@
-from models.log_handler import log
-from models.price_handler import price_handler
+from handlers.log_handler import log
+from handlers.price_handler import price_handler
 from config.settings import MIN_VOLUME, MAX_VOLUME
 
 async def coin_handler(client, duration_seconds):
