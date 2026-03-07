@@ -39,7 +39,7 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
     except Exception as e:
         await log(f"❌ Failed to send signal to OperationHandler: {e}")
 
-    trade_id = f"{symbol}_{int(start_time)}"
+    trade_id = f"{symbol}_{int(start_time * 1000)}"
     active_trades[trade_id] = {
         'symbol': symbol,
         'direction': direction,
@@ -68,16 +68,23 @@ async def check_trade_conditions(symbol, current_price):
         if not trade['active'] or trade['symbol'] != symbol:
             continue
         
-        if current_time - trade['start_time'] > TIME_WINDOW:
-            await close_trade_timeout(trade_id, current_price)
-            trades_to_remove.append(trade_id)
-            continue
-        
-        if check_tp_sl_hit(trade, current_price):
-            trades_to_remove.append(trade_id)
+        try:
+            if current_time - trade['start_time'] > TIME_WINDOW:
+                await close_trade_timeout(trade_id, current_price)
+                trades_to_remove.append(trade_id)
+                continue
+            
+            should_close = await check_tp_sl_hit(trade, current_price)
+            if should_close:
+                trades_to_remove.append(trade_id)
+        except Exception as e:
+            await log(f"❌ Error checking trade {trade_id}: {e}")
     
     for trade_id in trades_to_remove:
-        await finalize_trade(trade_id)
+        try:
+            await finalize_trade(trade_id)
+        except Exception as e:
+            await log(f"❌ Error finalizing trade {trade_id}: {e}")
 
 async def check_tp_sl_hit(trade, current_price) -> bool:
     direction = trade['direction']
@@ -131,8 +138,11 @@ async def hit_take_profit(trade, current_price, tp_price, level_index):
     trade['profit'] = profit_percentage
     trade['result'] = result
     
-    await tp_sl_alert_handler(level_index + 1, profit_percentage, trade['original_message_id'])
-    await log(f"🎯 {result}: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    try:
+        await tp_sl_alert_handler(level_index + 1, profit_percentage, trade['original_message_id'])
+        await log(f"🎯 {result}: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    except Exception as e:
+        await log(f"❌ Error sending TP alert for {trade['symbol']}: {e}")
 
 async def hit_stop_loss(trade, current_price, sl_price):
     side = -1 if trade['direction'] == "SHORT" else 1
@@ -144,8 +154,11 @@ async def hit_stop_loss(trade, current_price, sl_price):
     trade['profit'] = profit_percentage
     trade['result'] = 'SL'
     
-    await tp_sl_alert_handler(-1, profit_percentage, trade['original_message_id'])
-    await log(f"🛑 SL: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    try:
+        await tp_sl_alert_handler(-1, profit_percentage, trade['original_message_id'])
+        await log(f"🛑 SL: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    except Exception as e:
+        await log(f"❌ Error sending SL alert for {trade['symbol']}: {e}")
 
 async def close_trade_timeout(trade_id, current_price):
     trade = active_trades[trade_id]
@@ -159,10 +172,17 @@ async def close_trade_timeout(trade_id, current_price):
     trade['profit'] = profit_percentage
     trade['result'] = 'TIME'
     
-    await tp_sl_alert_handler(0, profit_percentage, trade['original_message_id'])
-    await log(f"⏰ TIME: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    try:
+        await tp_sl_alert_handler(0, profit_percentage, trade['original_message_id'])
+        await log(f"⏰ TIME: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+    except Exception as e:
+        await log(f"❌ Error sending TIME alert for {trade['symbol']}: {e}")
 
 async def finalize_trade(trade_id):
+    if trade_id not in active_trades:
+        await log(f"⚠️ Trade {trade_id} already removed")
+        return
+    
     trade = active_trades[trade_id]
     
     if trade['close_time'] and trade['close_price']:
