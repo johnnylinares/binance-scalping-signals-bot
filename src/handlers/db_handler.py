@@ -1,5 +1,5 @@
 from supabase import create_client, Client
-from models.log_handler import log
+from handlers.log_handler import log
 from config.settings import SUPABASE_URL, SUPABASE_KEY
 
 supabase: Client = None
@@ -19,7 +19,7 @@ async def insert_trade(trade_data: dict):
         return
 
     try:
-        response = supabase.table('signals-data').insert(trade_data).execute()
+        response = supabase.table('signals-data-20').insert(trade_data).execute()
         
         if response.data:
             await log(f"[DB_HANDLER] Trade insertado: {trade_data.get('symbol')} -> {trade_data.get('result')}%")
