@@ -65,12 +65,16 @@ async def check_trade_conditions(symbol, current_price):
     trades_to_remove = []
     
     for trade_id, trade in list(active_trades.items()):
-        if not trade['active'] or trade['symbol'] != symbol:
+        if trade['symbol'] != symbol:
+            continue
+        
+        if not trade['active']:
             continue
         
         try:
             if current_time - trade['start_time'] > TIME_WINDOW:
-                await close_trade_timeout(trade_id, current_price)
+                if trade['result'] is None:
+                    await close_trade_timeout(trade_id, current_price)
                 trades_to_remove.append(trade_id)
                 continue
             
@@ -128,19 +132,28 @@ async def hit_take_profit(trade, current_price, tp_price, level_index):
     
     if level_index == 0:
         result = 'TP1'
+        profit_value = 5.0
     elif level_index == 1:
         result = 'TP2'
+        profit_value = 10.0
     elif level_index == 2:
         result = 'TP3'
+        profit_value = 15.0
     else:
         result = 'TP4'
+        profit_value = 20.0
     
-    trade['profit'] = profit_percentage
+    trade['profit'] = profit_value
     trade['result'] = result
+    
+    if level_index == 3:
+        trade['active'] = False
+        trade['close_price'] = tp_price
+        trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
     
     try:
         await tp_sl_alert_handler(level_index + 1, profit_percentage, trade['original_message_id'])
-        await log(f"🎯 {result}: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+        await log(f"🎯 {result}: {trade['symbol']} at ${current_price} ({profit_value:+.1f}%)")
     except Exception as e:
         await log(f"❌ Error sending TP alert for {trade['symbol']}: {e}")
 
@@ -151,12 +164,12 @@ async def hit_stop_loss(trade, current_price, sl_price):
     trade['active'] = False
     trade['close_price'] = sl_price
     trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
-    trade['profit'] = profit_percentage
+    trade['profit'] = -5.0
     trade['result'] = 'SL'
     
     try:
         await tp_sl_alert_handler(-1, profit_percentage, trade['original_message_id'])
-        await log(f"🛑 SL: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+        await log(f"🛑 SL: {trade['symbol']} at ${current_price} (profit: -5.0%)")
     except Exception as e:
         await log(f"❌ Error sending SL alert for {trade['symbol']}: {e}")
 
