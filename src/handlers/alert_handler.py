@@ -1,6 +1,6 @@
 import telegram
 from telegram import Message
-from config.settings import BOT_TOKEN, CHANNEL_ID 
+from config.settings import BOT_TOKEN, CHANNEL_ID, GROUP_ID 
 
 bot = telegram.Bot(BOT_TOKEN)
 
@@ -29,7 +29,7 @@ async def tp_sl_alert_handler(hit, result, original_message_id):
         alert = f"✅ TP4 (+20%)"
 
     await bot.send_message(
-        chat_id = CHANNEL_ID,
+        chat_id = GROUP_ID,
 
         text=f'{alert}',
         reply_to_message_id=original_message_id
