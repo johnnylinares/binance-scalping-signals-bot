@@ -1,6 +1,6 @@
 import telegram
 from telegram import Message
-from config.settings import BOT_TOKEN, CHANNEL_ID, GROUP_ID 
+from config.settings import BOT_TOKEN, CHANNEL_ID, GROUP_ID
 
 bot = telegram.Bot(BOT_TOKEN)
 
