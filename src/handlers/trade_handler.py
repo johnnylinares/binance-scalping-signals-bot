@@ -145,11 +145,11 @@ async def hit_take_profit(trade, current_price, tp_price, level_index):
     
     trade['profit'] = profit_value
     trade['result'] = result
+    trade['close_price'] = tp_price
+    trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
     
     if level_index == 3:
         trade['active'] = False
-        trade['close_price'] = tp_price
-        trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
     
     try:
         await tp_sl_alert_handler(level_index + 1, profit_percentage, trade['original_message_id'])
@@ -176,20 +176,22 @@ async def hit_stop_loss(trade, current_price, sl_price):
 async def close_trade_timeout(trade_id, current_price):
     trade = active_trades[trade_id]
     
-    side = -1 if trade['direction'] == "SHORT" else 1
-    profit_percentage = round(((current_price - trade['entry_price']) / trade['entry_price']) * side * 100, 2)
+    if trade['result'] is None:
+        side = -1 if trade['direction'] == "SHORT" else 1
+        profit_percentage = round(((current_price - trade['entry_price']) / trade['entry_price']) * side * 100, 2)
+        
+        trade['close_price'] = current_price
+        trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
+        trade['profit'] = profit_percentage
+        trade['result'] = 'TIME'
+        
+        try:
+            await tp_sl_alert_handler(0, profit_percentage, trade['original_message_id'])
+            await log(f"⏰ TIME: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
+        except Exception as e:
+            await log(f"❌ Error sending TIME alert for {trade['symbol']}: {e}")
     
     trade['active'] = False
-    trade['close_price'] = current_price
-    trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
-    trade['profit'] = profit_percentage
-    trade['result'] = 'TIME'
-    
-    try:
-        await tp_sl_alert_handler(0, profit_percentage, trade['original_message_id'])
-        await log(f"⏰ TIME: {trade['symbol']} at ${current_price} ({profit_percentage:+.1f}%)")
-    except Exception as e:
-        await log(f"❌ Error sending TIME alert for {trade['symbol']}: {e}")
 
 async def finalize_trade(trade_id):
     if trade_id not in active_trades:
@@ -214,7 +216,7 @@ async def finalize_trade(trade_id):
         }
         
         await insert_trade(trade_data)
-        await log(f"💾 Trade saved: {trade['symbol']} result: {trade['result']} profit: {trade['profit']:+.2f}%")
+        await log(f"💾 Trade finalized: {trade['symbol']} result: {trade['result']} profit: {trade['profit']:+.2f}%")
     
     del active_trades[trade_id]
 
