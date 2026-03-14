@@ -6,7 +6,13 @@ from handlers.log_handler import log
 from handlers.alert_handler import tp_sl_alert_handler 
 from handlers.db_handler import insert_trade
 from handlers.operation_handler import OperationHandler
-from config.settings import TP_LEVELS, SL_LEVELS, TIME_WINDOW
+from config.settings import (
+    TP_LEVELS,
+    SL_LEVELS,
+    TIME_WINDOW,
+    ENABLE_BREAKEVEN,
+    BREAKEVEN_TRIGGER,
+)
 
 op_handler = OperationHandler()
 
@@ -55,7 +61,8 @@ async def trade_handler(bm, symbol, percentage_change, price, original_message_i
         'close_price': None,
         'close_time': None,
         'result': None,
-        'profit': 0.0
+        'profit': 0.0,
+        'breakeven_applied': False
     }
     
     await log(f"📊 Added {symbol} {direction} to monitoring pool ({len(active_trades)} active trades)")
@@ -96,8 +103,10 @@ async def check_tp_sl_hit(trade, current_price) -> bool:
     sl_prices = trade['sl_prices']
     hit_count = trade['hit_count']
     
+    await maybe_apply_breakeven(trade, current_price)
+    
     if direction == "SHORT":
-        if current_price >= sl_prices[1] and hit_count == 0:
+        if current_price >= sl_prices[1] and (hit_count == 0 or trade['breakeven_applied']):
             await hit_stop_loss(trade, current_price, sl_prices[1])
             return True
         
@@ -111,7 +120,7 @@ async def check_tp_sl_hit(trade, current_price) -> bool:
                 break
     
     else:
-        if current_price <= sl_prices[1] and hit_count == 0:
+        if current_price <= sl_prices[1] and (hit_count == 0 or trade['breakeven_applied']):
             await hit_stop_loss(trade, current_price, sl_prices[1])
             return True
         
@@ -125,6 +134,32 @@ async def check_tp_sl_hit(trade, current_price) -> bool:
                 break
     
     return False
+
+async def maybe_apply_breakeven(trade, current_price):
+    if not ENABLE_BREAKEVEN:
+        return
+
+    if trade['breakeven_applied'] or not trade['active']:
+        return
+
+    entry_price = trade['entry_price']
+    trigger = BREAKEVEN_TRIGGER
+
+    if trade['direction'] == "LONG":
+        trigger_price = entry_price * (1 + trigger)
+        if current_price < trigger_price:
+            return
+    else:
+        trigger_price = entry_price * (1 - trigger)
+        if current_price > trigger_price:
+            return
+
+    trade['sl_prices'] = [entry_price for _ in trade['sl_prices']]
+    trade['breakeven_applied'] = True
+
+    await log(
+        f"🔒 Breakeven activated for {trade['symbol']} at entry ${entry_price}"
+    )
 
 async def hit_take_profit(trade, current_price, tp_price, level_index):
     tp_level = TP_LEVELS[level_index]
@@ -159,17 +194,17 @@ async def hit_take_profit(trade, current_price, tp_price, level_index):
 
 async def hit_stop_loss(trade, current_price, sl_price):
     side = -1 if trade['direction'] == "SHORT" else 1
-    profit_percentage = round(((sl_price - trade['entry_price']) / trade['entry_price']) * side * 100, 2)
+    profit_percentage = round(((current_price - trade['entry_price']) / trade['entry_price']) * side * 100, 2)
     
     trade['active'] = False
-    trade['close_price'] = sl_price
+    trade['close_price'] = current_price
     trade['close_time'] = datetime.now(pytz.timezone('America/Caracas')).isoformat()
-    trade['profit'] = -5.0
+    trade['profit'] = profit_percentage
     trade['result'] = 'SL'
     
     try:
         await tp_sl_alert_handler(-1, profit_percentage, trade['original_message_id'])
-        await log(f"🛑 SL: {trade['symbol']} at ${current_price} (profit: -5.0%)")
+        await log(f"🛑 SL: {trade['symbol']} at ${current_price} (profit: {profit_percentage:+.2f}%)")
     except Exception as e:
         await log(f"❌ Error sending SL alert for {trade['symbol']}: {e}")
 
