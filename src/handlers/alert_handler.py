@@ -1,3 +1,6 @@
+import asyncio
+from typing import Dict, Optional
+
 import telegram
 from telegram import Message
 from telegram.error import TelegramError
